@@ -85,6 +85,7 @@ class BridgeConfig:
     timeout_seconds: int = 900
     max_output_chars: int = MAX_OUTPUT_CHARS
     require_token: bool = False
+    auto_push: bool = False
 
     @classmethod
     def load(cls, config_path: Path | None) -> "BridgeConfig":
@@ -129,6 +130,7 @@ class BridgeConfig:
 
         codex = raw.get("codex") or {}
         security = raw.get("security") or {}
+        git = raw.get("git") or {}
         return cls(
             projects=projects,
             default_project=default_project,
@@ -138,6 +140,7 @@ class BridgeConfig:
             timeout_seconds=int(codex.get("timeout_seconds", 900)),
             max_output_chars=int(codex.get("max_output_chars", MAX_OUTPUT_CHARS)),
             require_token=bool(security.get("require_token", False)),
+            auto_push=bool(git.get("auto_push", False)),
         )
 
 
@@ -365,6 +368,8 @@ class TaskState:
     error: str | None = None
     events: list[dict[str, Any]] = field(default_factory=list)
     pending_approvals: dict[str, dict[str, Any]] = field(default_factory=dict)
+    changed_paths: list[str] = field(default_factory=list)
+    published: dict[str, Any] | None = None
     done: threading.Event = field(default_factory=threading.Event)
 
     def add_output(self, text: str) -> None:
@@ -391,6 +396,8 @@ class TaskState:
             "output": trim_text(self.output, manager.config.max_output_chars),
             "diff": trim_text(self.diff, manager.config.max_output_chars),
             "error": self.error,
+            "changed_paths": self.changed_paths,
+            "published": self.published,
             "pending_approvals": [
                 {key: value for key, value in approval.items() if key != "_rpc_id"}
                 for approval in self.pending_approvals.values()
@@ -492,7 +499,18 @@ class TaskManager:
             elif kind == "fileChange":
                 changes = item.get("changes")
                 if isinstance(changes, list):
-                    paths = [str(change.get("path")) for change in changes if isinstance(change, dict)]
+                    paths: list[str] = []
+                    for change in changes:
+                        if not isinstance(change, dict) or not change.get("path"):
+                            continue
+                        raw_path = Path(str(change["path"]))
+                        try:
+                            path = str(raw_path.resolve().relative_to(task.project.path.resolve()))
+                        except ValueError:
+                            path = str(change["path"])
+                        if path not in task.changed_paths:
+                            task.changed_paths.append(path)
+                        paths.append(path)
                     if paths:
                         task.add_output("\nChanged files: " + ", ".join(paths))
 
@@ -543,6 +561,20 @@ class TaskManager:
                 task.status = "timeout"
             task.error = f"超过等待时间 {timeout_seconds} 秒；可稍后调用 get_task_status 查询。"
 
+    def _maybe_auto_publish(self, task: TaskState) -> None:
+        if not self.config.auto_push or task.status != "completed":
+            return
+        try:
+            task.published = self.publish(
+                task.task_id,
+                None,
+                f"Complete {task.task_id}",
+                task.changed_paths or None,
+                True,
+            )
+        except Exception as exc:
+            task.error = f"任务完成，但自动 push 失败: {exc}"
+
     def start_task(
         self,
         instruction: str,
@@ -565,6 +597,7 @@ class TaskManager:
             self._start_thread(task, model)
             self._start_turn(task, instruction)
             self._wait_for_turn(task, timeout_seconds or self.config.timeout_seconds)
+            self._maybe_auto_publish(task)
         except Exception as exc:
             with self.lock:
                 task.status = "failed"
@@ -588,6 +621,7 @@ class TaskManager:
         try:
             self._start_turn(task, instruction)
             self._wait_for_turn(task, timeout_seconds or self.config.timeout_seconds)
+            self._maybe_auto_publish(task)
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)

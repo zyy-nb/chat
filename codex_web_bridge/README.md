@@ -33,6 +33,8 @@ ChatGPT 连接要求：在 ChatGPT 开发者模式中添加 MCP 连接。ChatGPT
 
 `publish_result` 默认不 push，并且默认只暂存已跟踪文件的修改。要发布新文件，必须通过 `paths` 传入相对路径；这样不会把工作区中原本就存在的飞行数据、输出文件或其他未跟踪文件误上传。
 
+如果 `chat` 路径已经指向专用仓库，可以在 `config.json` 中将 `git.auto_push` 改为 `true`。每个完成的任务会自动使用 `codex/<task_id>` 分支提交并 push；当前工作区包含无关数据，因此示例默认关闭此选项。
+
 例如：
 
 ```json

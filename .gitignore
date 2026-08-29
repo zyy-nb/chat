@@ -1,0 +1,4 @@
+.codex-bridge-venv/
+codex_web_bridge/config.json
+**/__pycache__/
+.pytest_cache/

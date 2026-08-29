@@ -1,0 +1,20 @@
+{
+  "default_project": "chat",
+  "projects": {
+    "chat": {
+      "path": "C:/path/to/your/chat-repository",
+      "remote": "origin",
+      "default_branch": "main"
+    }
+  },
+  "codex": {
+    "command": "codex.cmd",
+    "approval_policy": "on-request",
+    "sandbox": "workspace-write",
+    "timeout_seconds": 900,
+    "max_output_chars": 24000
+  },
+  "security": {
+    "require_token": true
+  }
+}
